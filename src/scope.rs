@@ -7,6 +7,7 @@ use generational_box::GenerationalBox;
 use slab::Slab;
 
 use crate::composer::NodeKey;
+use crate::subcompose::{SlotId, SubcomposeScope};
 use crate::{AnyData, ComposeNode, Composer, Loc, Node, State, StateId};
 
 pub struct Scope<S, N>
@@ -82,6 +83,36 @@ where
         self.composer.write().key_stack.push(key);
         content(*self);
         self.composer.write().key_stack.pop();
+    }
+
+    /// Creates a SubcomposeScope that can be used for deferred composition.
+    /// This enables composing children based on runtime information like
+    /// layout constraints or measurement results.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // During initial composition, create a subcompose scope
+    /// let subcompose_scope = scope.create_subcompose_scope();
+    ///
+    /// // Later, during measurement/layout:
+    /// let result = subcompose_scope.subcompose(0, |s| {
+    ///     s.some_composable();
+    /// });
+    /// ```
+    #[track_caller]
+    pub fn create_subcompose_scope(&self) -> SubcomposeScope<N> {
+        let c = self.composer.read();
+        let parent_node_key = c.current_node_key;
+        drop(c);
+        SubcomposeScope::new(self.composer, parent_node_key, self.id)
+    }
+
+    /// Creates a SubcomposeScope attached to a specific node.
+    /// This is useful when you want to attach subcomposed children to a node
+    /// other than the current node.
+    #[track_caller]
+    pub fn create_subcompose_scope_for(&self, node_key: NodeKey) -> SubcomposeScope<N> {
+        SubcomposeScope::new(self.composer, node_key, self.id)
     }
 
     pub fn create_node<C, T, I, A, F, U>(
@@ -227,6 +258,14 @@ impl ScopeId {
     #[inline(always)]
     pub fn get_key(&self) -> usize {
         self.key
+    }
+
+    /// Create a ScopeId for subcomposition from a parent scope and slot id
+    pub fn from_subcompose(_parent: ScopeId, slot_id: SlotId) -> Self {
+        Self {
+            loc: slot_id.loc,
+            key: slot_id.slot_key,
+        }
     }
 }
 

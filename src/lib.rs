@@ -15,6 +15,9 @@ pub use state::{State, StateId};
 mod scope;
 pub use scope::{Root, Scope, ScopeId};
 
+mod subcompose;
+pub use subcompose::{SlotId, SubcomposeResult, SubcomposeScope};
+
 pub mod utils;
 
 mod map;
