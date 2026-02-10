@@ -13,7 +13,7 @@ homepage = "https://github.com/cksac/compose-rt"
 
 
 [dependencies]
-generational-box = "0.6"
+generational-box = "0.7"
 rustc-hash = "2.1"
 slab = "0.4"
 

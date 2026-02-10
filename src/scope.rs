@@ -36,12 +36,18 @@ where
     N: ComposeNode,
 {
     #[inline(always)]
-    pub(crate) fn new(id: ScopeId, composer: GenerationalBox<Composer<N>>) -> Self {
+    pub fn new(id: ScopeId, composer: GenerationalBox<Composer<N>>) -> Self {
         Self {
             id,
             composer,
             ty: PhantomData,
         }
+    }
+
+    /// Returns the composer handle.
+    #[inline(always)]
+    pub fn composer(&self) -> GenerationalBox<Composer<N>> {
+        self.composer
     }
 
     #[inline(always)]
@@ -142,7 +148,9 @@ where
                 c.start_node(parent_node_key, current_scope.id);
                 let current_node_key = c.current_node_key;
                 let is_visited = c.composables.contains_key(&current_node_key);
-                let is_dirty = c.dirty_nodes.contains(&current_node_key);
+                let is_self_dirty = c.dirty_nodes.contains(&current_node_key);
+                let is_parent_dirty = c.dirty_nodes.contains(&parent_node_key);
+                let is_dirty = is_self_dirty || is_parent_dirty;
                 if !is_dirty && is_visited {
                     c.skip_node(parent_node_key);
                     return current_node_key;
@@ -159,7 +167,7 @@ where
                     &factory,
                     &update,
                 );
-                (parent_node_key, current_node_key, is_dirty)
+                (parent_node_key, current_node_key, is_self_dirty)
             };
             content(current_scope);
             let mut c = parent_scope.composer.write();

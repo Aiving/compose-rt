@@ -21,12 +21,21 @@ where
     N: ComposeNode,
 {
     #[inline(always)]
-    pub(crate) fn new(id: StateId, composer: GenerationalBox<Composer<N>>) -> Self {
+    pub fn new(id: StateId, composer: GenerationalBox<Composer<N>>) -> Self {
         Self {
             id,
             composer,
             ty: PhantomData,
         }
+    }
+
+    /// Mutate the state value without tracking reads.
+    /// Marks the state as dirty for recomposition.
+    pub fn update<F>(&self, func: F)
+    where
+        F: Fn(&mut T),
+    {
+        self.with_mut_untracked(|val| func(val));
     }
 
     pub fn with<F, U>(&self, func: F) -> U
@@ -165,6 +174,16 @@ impl StateId {
             node_key,
             loc: Loc::new(),
         }
+    }
+
+    /// Create a StateId with an explicit `Loc`.
+    ///
+    /// Use this when the `#[track_caller]` chain would be broken by a closure
+    /// boundary. Capture `Loc::new()` in the outer `#[track_caller]` function
+    /// and pass it here.
+    #[inline(always)]
+    pub fn with_loc(node_key: NodeKey, loc: Loc) -> Self {
+        Self { node_key, loc }
     }
 }
 
