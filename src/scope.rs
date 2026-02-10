@@ -155,6 +155,11 @@ where
                     c.skip_node(parent_node_key);
                     return current_node_key;
                 }
+                // Propagate dirtiness: insert into dirty_nodes so children
+                // can see is_parent_dirty during their own create_node check.
+                if is_parent_dirty && !is_self_dirty {
+                    c.dirty_nodes.insert(current_node_key);
+                }
                 drop(c);
                 let args = input();
                 let mut c = parent_scope.composer.write();
@@ -167,7 +172,7 @@ where
                     &factory,
                     &update,
                 );
-                (parent_node_key, current_node_key, is_self_dirty)
+                (parent_node_key, current_node_key, is_dirty)
             };
             content(current_scope);
             let mut c = parent_scope.composer.write();
