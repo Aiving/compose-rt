@@ -139,6 +139,7 @@ where
             child_scope,
             content,
             || {},
+            |_, _| true,
             move |_, _| UiNode::new(name.clone(), 0, 0),
             |_, _, _| {},
         );
@@ -153,6 +154,7 @@ where
             child_scope,
             |_| {},
             move || (name.clone(), text.clone(), width, height),
+            |_, _| true,
             |(name, _text, w, h), _| UiNode::new(name, w, h),
             |node, (_, _text, w, h), _| {
                 node.intrinsic_size = Size {
@@ -259,6 +261,7 @@ where
                 subcompose.end_composition();
             },
             || {},
+            |_, _| true,
             move |_, _| UiNode::new(name.clone(), 0, 0),
             |_node, _, _ctx| {},
         );
@@ -304,17 +307,20 @@ where
                 subcompose.begin_composition();
 
                 // Only compose visible items (lazy composition)
-                let items_to_compose = items.len().min(visible_count);
-
-                for index in 0..items_to_compose {
+                for (index, item) in items
+                    .iter()
+                    .enumerate()
+                    .take(items.len().min(visible_count))
+                {
                     let _result = subcompose.compose::<_, Item>(index, |s| {
-                        items[index](s);
+                        item(s);
                     });
                 }
 
                 subcompose.end_composition();
             },
             || {},
+            |_, _| true,
             move |_, _| UiNode::new(name.clone(), 0, 0),
             |_node, _, _ctx| {},
         );
@@ -372,6 +378,7 @@ where
                 subcompose.end_composition();
             },
             || {},
+            |_, _| true,
             move |_, _| UiNode::new(name.clone(), 0, 0),
             |_node, _, _ctx| {},
         );

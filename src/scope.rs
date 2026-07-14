@@ -60,7 +60,7 @@ where
     }
 
     #[track_caller]
-    pub fn use_state<F, T>(&self, init: F) -> State<T, N>
+    pub fn use_state<F, T>(&self, init: F) -> State<T>
     where
         T: 'static,
         F: Fn() -> T + 'static,
@@ -69,9 +69,45 @@ where
         let c = c.deref_mut();
         let current_node_key = c.current_node_key;
         let id = StateId::new(current_node_key);
+
         let scope_states = c.states.entry(current_node_key).or_default();
-        let _ = scope_states.entry(id).or_insert_with(|| Box::new(init()));
-        State::new(id, self.composer)
+        let value = *scope_states
+            .entry(id)
+            .or_insert_with(|| c.state_owner.insert(Box::new(init())));
+
+        State::new(id, value)
+    }
+
+    /// Runs `effect` once whenever `key` change, giving it access to `N::Context` so it can spawn work on whatever executor lives there.
+    #[track_caller]
+    pub fn use_effect<K, F>(&self, key: K, effect: F)
+    where
+        K: PartialEq + Clone + 'static,
+        F: FnOnce(&mut N::Context),
+    {
+        let mut c = self.composer.write();
+        let c = c.deref_mut();
+        let current_node_key = c.current_node_key;
+        let id = StateId::new(current_node_key);
+        let scope_states = c.states.entry(current_node_key).or_default();
+
+        let needs_run = match scope_states.get(&id) {
+            Some(existing) => {
+                existing
+                    .read()
+                    .downcast_ref::<Option<K>>()
+                    .unwrap()
+                    .as_ref()
+                    != Some(&key)
+            }
+            None => true,
+        };
+
+        if needs_run {
+            scope_states.insert(id, c.state_owner.insert(Box::new(Some(key))));
+
+            effect(&mut c.context);
+        }
     }
 
     #[track_caller]
@@ -115,17 +151,20 @@ where
         SubcomposeScope::new(self.composer, node_key, self.id)
     }
 
-    pub fn create_node<C, T, I, A, F, U>(
+    #[track_caller]
+    pub fn create_node<C, T, I, E, A, F, U>(
         &self,
         child_scope: Scope<T, N>,
         content: C,
         input: I,
+        equals: E,
         factory: F,
         update: U,
     ) where
         T: 'static,
         C: Fn(Scope<T, N>) + Clone + 'static,
         I: Fn() -> A + Clone + 'static,
+        E: Fn(&N, &A) -> bool + Clone + 'static,
         A: 'static,
         F: Fn(A, &mut N::Context) -> N + Clone + 'static,
         U: Fn(&mut N, A, &mut N::Context) + Clone + 'static,
@@ -143,12 +182,18 @@ where
                 let current_node_key = c.current_node_key;
                 let is_visited = c.composables.contains_key(&current_node_key);
                 let is_dirty = c.dirty_nodes.contains(&current_node_key);
-                if !is_dirty && is_visited {
+                let args = input();
+                if !is_dirty && is_visited && {
+                    if let Some(node) = &c.nodes[current_node_key].data {
+                        equals(node, &args)
+                    } else {
+                        false
+                    }
+                } {
                     c.skip_node(parent_node_key);
                     return current_node_key;
                 }
                 drop(c);
-                let args = input();
                 let mut c = parent_scope.composer.write();
                 let c = c.deref_mut();
                 update_node(
@@ -178,17 +223,19 @@ where
     }
 
     #[inline(always)]
-    pub fn create_any_node<C, T, I, A, E, F, U>(
+    pub fn create_any_node<C, T, I, Equals, A, E, F, U>(
         &self,
         child_scope: Scope<T, N>,
         content: C,
         input: I,
+        equals: Equals,
         factory: F,
         update: U,
     ) where
         T: 'static,
         C: Fn(Scope<T, N>) + Clone + 'static,
         I: Fn() -> A + Clone + 'static,
+        Equals: Fn(&N, &A) -> bool + Clone + 'static,
         A: 'static,
         N: AnyData<E>,
         E: 'static,
@@ -199,6 +246,7 @@ where
             child_scope,
             content,
             input,
+            equals,
             move |args, ctx| {
                 let e = factory(args, ctx);
                 AnyData::new(e)

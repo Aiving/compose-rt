@@ -30,7 +30,7 @@ impl ComposeNode for Data {
 }
 
 type Scope<S> = compose_rt::Scope<S, Data>;
-type State<T> = compose_rt::State<T, Data>;
+type State<T> = compose_rt::State<T>;
 
 pub struct Container;
 pub struct Left;
@@ -54,14 +54,28 @@ where
     {
         let child_scope = self.child::<Container>();
         let data = Data::new();
-        self.create_node(child_scope, content, || {}, move |_, _| data, |_, _, _| {});
+        self.create_node(
+            child_scope,
+            content,
+            || {},
+            |_, _| true,
+            move |_, _| data,
+            |_, _, _| {},
+        );
     }
 
     #[track_caller]
     fn leaf(&self) {
         let child_scope = self.child::<Left>();
         let data = Data::new();
-        self.create_node(child_scope, |_| {}, || {}, move |_, _| data, |_, _, _| {});
+        self.create_node(
+            child_scope,
+            |_| {},
+            || {},
+            |_, _| true,
+            move |_, _| data,
+            |_, _, _| {},
+        );
     }
 }
 

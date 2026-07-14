@@ -5,7 +5,7 @@ use std::ops::DerefMut;
 use generational_box::GenerationalBox;
 
 use crate::map::{HashMapExt, HashSetExt, Map, Set};
-use crate::{AnyData, ComposeNode, Composer, Loc, Node, NodeKey, Scope, ScopeId};
+use crate::{AnyData, ComposeNode, Composer, Loc, Node, NodeKey, Scope, ScopeId, StateTracker};
 
 /// A slot identifier for subcomposition.
 /// Combines the parent node key and a user-provided slot key for uniqueness.
@@ -168,6 +168,7 @@ where
 
             // Set up for subcomposition - we compose as children of the parent node
             c.current_node_key = self.parent_node_key;
+            c.state_tracker.set_current_node(self.parent_node_key);
 
             // Initialize child_idx_stack with the current number of children
             // This ensures new children are appended correctly
@@ -205,6 +206,7 @@ where
 
             // Restore the previous state
             c.current_node_key = saved_node_key;
+            c.state_tracker.set_current_node(saved_node_key);
 
             // When restoring child_idx_stack, we need to account for the children
             // added during subcomposition. The top of the stack represents how many
@@ -325,6 +327,35 @@ where
         )
     }
 
+    fn remove_node(c: &mut Composer<N>, parent: NodeKey, key: NodeKey) {
+        // Mark for unmount and remove from parent's children
+        c.unmount_nodes.insert(key);
+
+        if let Some(pos) = c
+            .nodes
+            .get(parent)
+            .and_then(|node| node.children.iter().position(|k| *k == key))
+        {
+            c.nodes[parent].children.remove(pos);
+        }
+
+        // Clean up state
+        if let Some(node_states) = c.states.remove(&key) {
+            for state in node_states.keys() {
+                StateTracker::notify_state_removed(state);
+            }
+        }
+
+        StateTracker::notify_node_removed(&key);
+
+        // Remove composable
+        c.composables.remove(&key);
+
+        for child in c.nodes.remove(key).children {
+            Self::remove_node(c, key, child);
+        }
+    }
+
     /// Dispose of slots that are no longer needed.
     /// This should be called after all subcompose operations to clean up unused slots.
     pub fn dispose_unused_slots(&mut self) {
@@ -341,35 +372,7 @@ where
         for slot_key in slots_to_remove {
             if let Some(node_keys) = self.active_slots.remove(&slot_key) {
                 for key in node_keys {
-                    // Mark for unmount and remove from parent's children
-                    c.unmount_nodes.insert(key);
-                    if let Some(pos) = c.nodes[self.parent_node_key]
-                        .children
-                        .iter()
-                        .position(|k| *k == key)
-                    {
-                        c.nodes[self.parent_node_key].children.remove(pos);
-                    }
-
-                    // Clean up state
-                    if let Some(node_states) = c.states.remove(&key) {
-                        for state in node_states.keys() {
-                            c.used_by.remove(state);
-                        }
-                    }
-                    if let Some(use_states) = c.uses.remove(&key) {
-                        for state in use_states {
-                            if let Some(used_by) = c.used_by.get_mut(&state) {
-                                used_by.remove(&key);
-                            }
-                        }
-                    }
-
-                    // Remove composable
-                    c.composables.remove(&key);
-
-                    // Remove node
-                    c.nodes.remove(key);
+                    Self::remove_node(c, self.parent_node_key, key);
                 }
             }
         }

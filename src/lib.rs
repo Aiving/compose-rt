@@ -1,23 +1,19 @@
 #![allow(clippy::new_without_default)]
 
-mod loc;
-pub use loc::Loc;
-
 mod composer;
-pub use composer::{AnyData, Composable, ComposeNode, Composer, Node, NodeKey};
-
+mod loc;
+pub mod map;
 mod recomposer;
-pub use recomposer::Recomposer;
-
-mod state;
-pub use state::{State, StateId};
-
 mod scope;
-pub use scope::{Root, Scope, ScopeId};
-
+mod state;
 mod subcompose;
-pub use subcompose::{SlotId, SubcomposeResult, SubcomposeScope};
-
 pub mod utils;
 
-mod map;
+pub use slab;
+
+pub use self::composer::{AnyData, Composable, ComposeNode, Composer, Node, NodeKey};
+pub use self::loc::Loc;
+pub use self::recomposer::Recomposer;
+pub use self::scope::{Root, Scope, ScopeId};
+pub use self::state::{State, StateId, StateTracker, StateTrackerRef, StateTrackerWeakRef};
+pub use self::subcompose::{SlotId, SubcomposeResult, SubcomposeScope};

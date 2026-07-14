@@ -1,11 +1,11 @@
 use std::any::Any;
 use std::fmt::{Debug, Formatter};
 
-use generational_box::{AnyStorage, UnsyncStorage};
+use generational_box::{AnyStorage, GenerationalBox, Owner, UnsyncStorage};
 use slab::Slab;
 
 use crate::map::{HashMapExt, HashSetExt, Map, Set};
-use crate::{Recomposer, Root, Scope, ScopeId, State, StateId};
+use crate::{Recomposer, Root, Scope, ScopeId, State, StateId, StateTracker, StateTrackerRef};
 
 pub trait Composable {
     fn compose(&self) -> NodeKey;
@@ -96,13 +96,12 @@ where
     pub(crate) initialized: bool,
     pub(crate) root_node_key: NodeKey,
     pub(crate) composables: Map<NodeKey, Box<dyn Composable>>,
-    pub(crate) states: Map<NodeKey, Map<StateId, Box<dyn Any>>>,
-    pub(crate) used_by: Map<StateId, Set<NodeKey>>,
-    pub(crate) uses: Map<NodeKey, Set<StateId>>,
+    pub(crate) state_owner: Owner,
+    pub(crate) state_tracker: StateTrackerRef,
+    pub(crate) states: Map<NodeKey, Map<StateId, GenerationalBox<Box<dyn Any>>>>,
     pub(crate) current_node_key: NodeKey,
     pub(crate) key_stack: Vec<usize>,
     pub(crate) child_idx_stack: Vec<usize>,
-    pub(crate) dirty_states: Set<StateId>,
     pub(crate) dirty_nodes: Set<NodeKey>,
     pub(crate) mount_nodes: Set<NodeKey>,
     pub(crate) unmount_nodes: Set<NodeKey>,
@@ -119,13 +118,12 @@ where
             initialized: false,
             root_node_key: 0,
             composables: Map::new(),
+            state_owner: UnsyncStorage::owner(),
+            state_tracker: StateTracker::new("composition"),
             states: Map::new(),
-            used_by: Map::new(),
-            uses: Map::new(),
             current_node_key: 0,
             key_stack: Vec::new(),
             child_idx_stack: Vec::new(),
-            dirty_states: Set::new(),
             dirty_nodes: Set::new(),
             mount_nodes: Set::new(),
             unmount_nodes: Set::new(),
@@ -139,13 +137,12 @@ where
             initialized: false,
             root_node_key: 0,
             composables: Map::with_capacity(capacity),
+            state_owner: UnsyncStorage::owner(),
+            state_tracker: StateTracker::with_capacity("composition", capacity),
             states: Map::with_capacity(capacity),
-            used_by: Map::with_capacity(capacity),
-            uses: Map::with_capacity(capacity),
             current_node_key: 0,
             child_idx_stack: Vec::new(),
             key_stack: Vec::new(),
-            dirty_states: Set::new(),
             dirty_nodes: Set::new(),
             mount_nodes: Set::with_capacity(capacity),
             unmount_nodes: Set::new(),
@@ -163,8 +160,10 @@ where
         let id = ScopeId::new();
         let scope = Scope::new(id, composer);
         composer.write().start_root(scope.id);
+        composer.read().state_tracker.make_active();
         let root_state = scope.use_state(|| {});
         root(scope);
+        composer.read().state_tracker.make_inactive();
         composer.write().end_root();
         let mut c = composer.write();
         c.initialized = true;
@@ -178,7 +177,7 @@ where
     #[track_caller]
     pub fn compose_with<R, F, T>(root: R, context: N::Context, state_fn: F) -> Recomposer<T, N>
     where
-        R: Fn(Scope<Root, N>, State<T, N>),
+        R: Fn(Scope<Root, N>, State<T>),
         F: Fn() -> T + 'static,
         T: 'static,
     {
@@ -209,6 +208,7 @@ where
         let parent_node_key = 0;
         let node_key = self.nodes.insert(Node::new(scope_id, parent_node_key));
         self.child_idx_stack.push(0);
+        self.state_tracker.set_current_node(node_key);
         self.current_node_key = node_key;
     }
 
@@ -231,6 +231,7 @@ where
                     if child_node.scope_id == scope_id {
                         // reuse existing node
                         self.current_node_key = child_key;
+                        self.state_tracker.set_current_node(child_key);
                         self.mount_nodes.insert(child_key);
                         self.child_idx_stack.push(0);
                     } else {
@@ -240,6 +241,7 @@ where
                         self.unmount_nodes.insert(child_key);
                         self.mount_nodes.insert(node_key);
                         self.current_node_key = node_key;
+                        self.state_tracker.set_current_node(node_key);
                         self.child_idx_stack.push(0);
                     }
                 } else {
@@ -248,6 +250,7 @@ where
                     self.nodes[parent_node_key].children.push(node_key);
                     self.mount_nodes.insert(node_key);
                     self.current_node_key = node_key;
+                    self.state_tracker.set_current_node(node_key);
                     self.child_idx_stack.push(0);
                 }
             } else {
@@ -259,6 +262,7 @@ where
             let node_key = self.nodes.insert(Node::new(scope_id, parent_node_key));
             self.nodes[parent_node_key].children.push(node_key);
             self.current_node_key = node_key;
+            self.state_tracker.set_current_node(node_key);
             self.child_idx_stack.push(0);
         }
     }
@@ -276,6 +280,7 @@ where
             *parent_child_count += 1;
         }
         self.current_node_key = parent_node_key;
+        self.state_tracker.set_current_node(parent_node_key);
     }
 
     #[inline(always)]
@@ -285,6 +290,7 @@ where
             *parent_child_count += 1;
         }
         self.current_node_key = parent_node_key;
+        self.state_tracker.set_current_node(parent_node_key);
     }
 }
 
@@ -295,9 +301,9 @@ where
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Composer")
             .field("nodes", &self.nodes)
-            .field("states", &self.states)
-            .field("dirty_states", &self.dirty_states)
-            .field("used_by", &self.used_by)
+            // .field("states", &self.states)
+            // .field("dirty_states", &self.dirty_states)
+            // .field("used_by", &self.used_by)
             .finish()
     }
 }

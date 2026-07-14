@@ -57,6 +57,7 @@ where
             child_scope,
             content,
             || {},
+            |_, _| true,
             move |_, c| {
                 *c += 1;
                 data
@@ -73,6 +74,7 @@ where
             child_scope,
             |_| {},
             || {},
+            |_, _| true,
             move |_, c| {
                 *c += 1;
                 data

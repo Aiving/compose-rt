@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 
 use generational_box::{GenerationalBox, Owner};
 
-use crate::{utils, ComposeNode, Composer, NodeKey, State};
+use crate::{utils, ComposeNode, Composer, NodeKey, State, StateTracker};
 
 pub struct Recomposer<S, N>
 where
@@ -12,7 +12,7 @@ where
     #[allow(dead_code)]
     pub(crate) owner: Owner,
     pub(crate) composer: GenerationalBox<Composer<N>>,
-    pub(crate) root_state: State<S, N>,
+    pub(crate) root_state: State<S>,
 }
 
 impl<S, N> Recomposer<S, N>
@@ -22,28 +22,30 @@ where
 {
     pub fn recompose(&mut self) {
         let mut c = self.composer.write();
-        c.dirty_nodes.clear();
-        for state_id in c.dirty_states.drain().collect::<Vec<_>>() {
-            if let Some(nodes) = c.used_by.get(&state_id).cloned() {
-                c.dirty_nodes.extend(nodes);
-            }
-        }
-        let mut composables = Vec::with_capacity(c.dirty_nodes.len());
-        for node_key in &c.dirty_nodes {
-            if let Some(composable) = c.composables.get(node_key).cloned() {
+        let composer = c.deref_mut();
+        composer.dirty_nodes.clear();
+        composer
+            .state_tracker
+            .take_dirty_nodes(&mut composer.dirty_nodes);
+        let mut composables = Vec::with_capacity(composer.dirty_nodes.len());
+        for node_key in &composer.dirty_nodes {
+            if let Some(composable) = composer.composables.get(node_key).cloned() {
                 composables.push((*node_key, composable));
             }
         }
+        composer.state_tracker.make_active();
         drop(c);
         for (node_key, composable) in composables {
             {
                 let mut c = self.composer.write();
                 c.current_node_key = node_key;
+                c.state_tracker.set_current_node(node_key);
             }
             composable.compose();
         }
         let mut c = self.composer.write();
         let c = c.deref_mut();
+        c.state_tracker.make_inactive();
         let unmount_nodes = c
             .unmount_nodes
             .difference(&c.mount_nodes)
@@ -52,19 +54,14 @@ where
         for n in unmount_nodes {
             c.composables.remove(&n);
             c.nodes.remove(n);
+
             if let Some(node_states) = c.states.remove(&n) {
                 for state in node_states.keys() {
-                    c.used_by.remove(state);
+                    StateTracker::notify_state_removed(state);
                 }
             }
-            let use_states = c.uses.remove(&n);
-            if let Some(use_states) = use_states {
-                for state in use_states {
-                    if let Some(used_by) = c.used_by.get_mut(&state) {
-                        used_by.remove(&n);
-                    }
-                }
-            }
+
+            StateTracker::notify_node_removed(&n);
         }
         c.mount_nodes.clear();
         c.unmount_nodes.clear();
@@ -173,8 +170,6 @@ where
         f.debug_struct("Recomposer")
             .field("nodes", &c.nodes)
             .field("states", &c.states)
-            .field("dirty_states", &c.dirty_states)
-            .field("used_by", &c.used_by)
             .field("composables", &c.composables.keys())
             .finish()
     }

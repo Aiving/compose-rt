@@ -55,6 +55,7 @@ where
             child_scope,
             content,
             || {},
+            |_, _| true,
             |_, _| "div".into(),
             |_, _, _| {},
         );
@@ -70,6 +71,7 @@ where
             child_scope,
             |_| {},
             move || text.clone().into(),
+            |_, _| true,
             |text, _| format!("button({})", text).into(),
             |n, text, _| {
                 n.0 = text;
@@ -87,6 +89,7 @@ where
             child_scope,
             |_| {},
             move || text.clone().into(),
+            |_, _| true,
             |text, _| format!("text({})", text).into(),
             |n, text, _| {
                 n.0 = text;
